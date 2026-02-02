@@ -8,47 +8,40 @@ import json
 # 🔴 必填：你的 DeepSeek API Key
 DEEPSEEK_API_KEY = "sk-be0e9b008e8049a28b5e6bfbe4243736"
 
-# 🔴 代理配置 (云端部署时通常不需要，本地测试如果报错请取消注释)
+# 🔴 代理配置
 # os.environ["HTTP_PROXY"] = "http://127.0.0.1:8086"
 # os.environ["HTTPS_PROXY"] = "http://127.0.0.1:8086"
 
-# 卡密库 (模拟发卡)
+# 卡密库
 VALID_TOKENS = ["jjyyzz202","jxmjxmgege","jjyyzz0022"] 
 
-# 数据库文件名 (自动生成，不用管)
+# 数据库文件名
 DB_FILE = "user_data_v7.json"
 
-# ================= 2. 数据库管理系统 (新增核心) =================
+# ================= 2. 数据库管理系统 =================
 
 def init_db():
-    """初始化数据库文件"""
     if not os.path.exists(DB_FILE):
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump({}, f)
 
 def load_user_data(token):
-    """读取用户的存档"""
     init_db()
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data.get(token, {})
 
 def save_user_data(token, answers, current_q, is_complete=False, report=""):
-    """保存用户进度"""
     init_db()
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    
-    # 转换 key 为字符串 (JSON不支持数字key)
     str_answers = {str(k): v for k, v in answers.items()}
-    
     data[token] = {
         "answers": str_answers,
         "current_q": current_q,
         "is_complete": is_complete,
         "report": report
     }
-    
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
@@ -59,7 +52,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# ================= 4. CSS 样式 (保持 V6.1 完美版) =================
+# ================= 4. CSS 样式 =================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;700&display=swap');
@@ -126,13 +119,21 @@ st.markdown("""
         background-color: #E5E5E5 !important;
         color: #666666 !important;
     }
+    
+    /* === 🔴 修复做题卡小按钮样式 === */
     .nav-btn button {
-        background-color: white !important;
+        background-color: #FFFFFF !important;
         border: 1px solid #A3B18A !important;
         color: #588157 !important;
-        font-size: 12px !important;
+        font-size: 14px !important; /* 字体稍微大一点 */
         padding: 0px !important;
-        height: 35px !important;
+        height: 40px !important; /* 高度稍微高一点 */
+        border-radius: 8px !important; /* 方圆角，看起来像网格 */
+        margin-bottom: 5px !important;
+    }
+    /* 已做完的题目颜色 */
+    .nav-btn button p:contains("✅") {
+        color: #2E7D32 !important;
     }
 
     /* 结果页 */
@@ -151,9 +152,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 5. 数据核心 & 状态管理 =================
+# ================= 5. 数据核心 =================
 
-# 初始化 Session State
 if 'page' not in st.session_state: st.session_state.page = 'login'
 if 'current_q' not in st.session_state: st.session_state.current_q = 1
 if 'answers' not in st.session_state: st.session_state.answers = {}
@@ -251,29 +251,35 @@ if st.session_state.page == 'login':
     
     st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
     if st.button("开启旅程 →", use_container_width=True):
-        if token in VALID_TOKENS:
-            # === 核心逻辑：读取存档 ===
+        # === 重置逻辑 ===
+        if token.startswith("RESET:"):
+            target_token = token.split(":")[1]
+            try:
+                if os.path.exists(DB_FILE):
+                    with open(DB_FILE, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if target_token in data:
+                        del data[target_token]
+                        with open(DB_FILE, 'w', encoding='utf-8') as f:
+                            json.dump(data, f, ensure_ascii=False, indent=4)
+                        st.toast(f"已重置：{target_token}", icon="🗑️")
+            except: pass
+        
+        # === 登录逻辑 ===
+        elif token in VALID_TOKENS:
             st.session_state.user_token = token
             saved_data = load_user_data(token)
-            
             if saved_data:
-                # 1. 如果有存档，恢复数据
                 st.session_state.answers = {int(k): v for k, v in saved_data.get("answers", {}).items()}
-                
-                # 2. 检查是否已完成
                 if saved_data.get("is_complete", False):
                     st.session_state.deep_report = saved_data.get("report", "")
-                    st.session_state.page = 'report' # 直接跳结果页
-                    st.success("检测到您已完成测评，正在跳转报告页...")
+                    st.session_state.page = 'report' 
                     st.rerun()
                 else:
-                    # 3. 未完成，跳到上次做的题目
                     st.session_state.current_q = saved_data.get("current_q", 1)
                     st.session_state.page = 'test'
-                    st.toast(f"欢迎回来！为您恢复进度至第 {st.session_state.current_q} 题", icon="📂")
                     st.rerun()
             else:
-                # 4. 新用户
                 st.session_state.page = 'test'
                 st.rerun()
         else:
@@ -301,7 +307,6 @@ elif st.session_state.page == 'test':
     for k, v in val_map.items():
         if st.session_state.answers.get(q_id) == v: default_val = k
             
-    # 答题交互
     answer = st.select_slider("你的真实感受：", options=["从无", "轻度", "中度", "偏重", "严重"], value=default_val)
     st.session_state.answers[q_id] = val_map[answer]
     st.markdown("</div><br>", unsafe_allow_html=True)
@@ -312,7 +317,6 @@ elif st.session_state.page == 'test':
         if st.button("← 上一题", use_container_width=True):
             if q_id > 1:
                 st.session_state.current_q -= 1
-                # 每次翻页自动保存
                 save_user_data(st.session_state.user_token, st.session_state.answers, st.session_state.current_q)
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -321,33 +325,41 @@ elif st.session_state.page == 'test':
         if q_id < 90:
             if st.button("下一题 →", use_container_width=True):
                 st.session_state.current_q += 1
-                # 每次翻页自动保存
                 save_user_data(st.session_state.user_token, st.session_state.answers, st.session_state.current_q)
                 st.rerun()
         else:
             if st.button("生成报告 ✨", use_container_width=True):
-                # 补全数据
                 for i in range(1, 91):
                      if i not in st.session_state.answers: st.session_state.answers[i] = 1
-                
-                # 保存并跳转
                 st.session_state.page = 'report'
-                save_user_data(st.session_state.user_token, st.session_state.answers, 90) # 这里先存一次，防止生成报告时断开
+                save_user_data(st.session_state.user_token, st.session_state.answers, 90)
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # 导航
+    # === 🔴 修复核心：移动端适配的做题卡 ===
     st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("🧩 查看做题进度 (点击跳转)", expanded=False):
+    with st.expander("🧩 查看做题进度 (点击跳转)", expanded=True): # 默认展开方便测试，正式版可改False
         st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
-        cols = st.columns(10)
-        for i in range(1, 91):
-            is_done = i in st.session_state.answers
-            label = f"{i}✅" if is_done else f"{i}"
-            if cols[(i-1)%10].button(label, key=f"nav_{i}"):
-                st.session_state.current_q = i
-                save_user_data(st.session_state.user_token, st.session_state.answers, i) # 跳转也保存
-                st.rerun()
+        
+        # 核心逻辑：不使用 columns(10)，而是每 6 个分一行，强制手机换行
+        # 这样保证顺序永远是 1,2,3...
+        
+        # 遍历 1-90，每 6 个一组
+        batch_size = 6
+        for i in range(1, 91, batch_size):
+            cols = st.columns(batch_size) # 建立这一行的列
+            for j in range(batch_size):
+                q_num = i + j
+                if q_num <= 90:
+                    is_done = q_num in st.session_state.answers
+                    label = f"{q_num}✅" if is_done else f"{q_num}"
+                    
+                    # 在对应的列里放按钮
+                    if cols[j].button(label, key=f"nav_{q_num}"):
+                        st.session_state.current_q = q_num
+                        save_user_data(st.session_state.user_token, st.session_state.answers, q_num)
+                        st.rerun()
+                        
         st.markdown('</div>', unsafe_allow_html=True)
 
 # --- C. 报告页 ---
@@ -386,18 +398,14 @@ elif st.session_state.page == 'report':
 
     st.markdown("#### 💌 深度治愈指南")
     
-    # 核心逻辑：报告的持久化
-    if not st.session_state.deep_report: # 如果内存里没有
-        # 尝试从存档读
+    if not st.session_state.deep_report:
         saved = load_user_data(st.session_state.user_token)
         if saved.get("report"):
             st.session_state.deep_report = saved["report"]
         else:
-            # 存档也没有，说明是第一次生成
             with st.spinner("小静正在用心解读您的每一项数据，请稍等几分钟"):
                 report_content = get_deepseek_report(scores)
                 st.session_state.deep_report = report_content
-                # === 永久存档：标记为完成，并保存报告 ===
                 save_user_data(st.session_state.user_token, st.session_state.answers, 90, is_complete=True, report=report_content)
     
     st.markdown(f"""
