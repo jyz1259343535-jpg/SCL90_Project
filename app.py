@@ -1,27 +1,65 @@
 import streamlit as st
 from openai import OpenAI
 import os
+import json
 
 # ================= 1. 核心配置 =================
 
-# 🔴 必填：你的 DeepSeek API Key (发布前一定要确认这里填了！)
+# 🔴 必填：你的 DeepSeek API Key
 DEEPSEEK_API_KEY = "sk-be0e9b008e8049a28b5e6bfbe4243736"
 
-# 🔴 代理配置 (部署到云端时，云端通常不需要代理，这两行可以保留，不影响)
+# 🔴 代理配置 (云端部署时通常不需要，本地测试如果报错请取消注释)
 # os.environ["HTTP_PROXY"] = "http://127.0.0.1:8086"
 # os.environ["HTTPS_PROXY"] = "http://127.0.0.1:8086"
 
-# 卡密库 (模拟)
-VALID_TOKENS = ["jjyyzz202"] 
+# 卡密库 (模拟发卡)
+VALID_TOKENS = ["jjyyzz202","jxmjxmgege","jjyyzz0022"] 
 
-# ================= 2. 页面配置 =================
+# 数据库文件名 (自动生成，不用管)
+DB_FILE = "user_data_v7.json"
+
+# ================= 2. 数据库管理系统 (新增核心) =================
+
+def init_db():
+    """初始化数据库文件"""
+    if not os.path.exists(DB_FILE):
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f)
+
+def load_user_data(token):
+    """读取用户的存档"""
+    init_db()
+    with open(DB_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data.get(token, {})
+
+def save_user_data(token, answers, current_q, is_complete=False, report=""):
+    """保存用户进度"""
+    init_db()
+    with open(DB_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    # 转换 key 为字符串 (JSON不支持数字key)
+    str_answers = {str(k): v for k, v in answers.items()}
+    
+    data[token] = {
+        "answers": str_answers,
+        "current_q": current_q,
+        "is_complete": is_complete,
+        "report": report
+    }
+    
+    with open(DB_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+# ================= 3. 页面基础配置 =================
 st.set_page_config(
     page_title="InnerPeace · 深度心理", 
     page_icon="🌿", 
     layout="centered"
 )
 
-# ================= 3. CSS 样式 (Ins风) =================
+# ================= 4. CSS 样式 (保持 V6.1 完美版) =================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;700&display=swap');
@@ -52,7 +90,7 @@ st.markdown("""
         border-radius: 10px;
     }
 
-    /* 通用卡片 */
+    /* 卡片 */
     .ins-card {
         background-color: #FFFFFF;
         padding: 25px;
@@ -62,7 +100,6 @@ st.markdown("""
         border: 1px solid #F0F0F0;
     }
     
-    /* 引导语卡片 (新功能) */
     .intro-card {
         background: linear-gradient(180deg, #FFFFFF 0%, #FAF9F6 100%);
         padding: 25px;
@@ -78,14 +115,16 @@ st.markdown("""
         height: 50px;
         font-weight: 600;
         border: none;
+        width: 100%;
     }
     .primary-btn button {
         background: linear-gradient(135deg, #A3B18A 0%, #588157 100%) !important;
         color: white !important;
+        box-shadow: 0 4px 15px rgba(88, 129, 87, 0.2);
     }
     .secondary-btn button {
         background-color: #E5E5E5 !important;
-        color: #333333 !important;
+        color: #666666 !important;
     }
     .nav-btn button {
         background-color: white !important;
@@ -112,11 +151,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================= 4. 数据核心 =================
+# ================= 5. 数据核心 & 状态管理 =================
 
+# 初始化 Session State
 if 'page' not in st.session_state: st.session_state.page = 'login'
 if 'current_q' not in st.session_state: st.session_state.current_q = 1
 if 'answers' not in st.session_state: st.session_state.answers = {}
+if 'user_token' not in st.session_state: st.session_state.user_token = ""
+if 'deep_report' not in st.session_state: st.session_state.deep_report = ""
 
 factors_map = {
     "躯体化": [1, 4, 12, 27, 40, 42, 48, 49, 52, 53, 56, 58],
@@ -162,7 +204,6 @@ def get_deepseek_report(scores):
     2. 若分数 < 2：简短夸奖，标示(✨状态佳)。
     3. 若分数 >= 2：解释该症状含义（去病耻化），并给出2条具体的CBT行动建议，标示(⚠️需呵护)或(🚨需重视)。
     4. 输出Markdown格式，排版清爽。
-请务必要充满人情味、要有专业性，每个因子的深度解析字数一定不能少，能多就多。
     """
     try:
         response = client.chat.completions.create(
@@ -172,9 +213,9 @@ def get_deepseek_report(scores):
     except Exception as e:
         return "✨ 治愈信件生成中...AI正在连接云端..."
 
-# ================= 5. 页面逻辑 =================
+# ================= 6. 页面逻辑 =================
 
-# --- A. 登录页 (含新增的欢迎语) ---
+# --- A. 登录页 ---
 if st.session_state.page == 'login':
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("""
@@ -184,7 +225,6 @@ if st.session_state.page == 'login':
     </div>
     """, unsafe_allow_html=True)
     
-    # === ✨ 新增：欢迎引导卡片 ===
     st.markdown("""
     <div style="max-width: 400px; margin: 20px auto;">
         <div class="intro-card">
@@ -195,15 +235,12 @@ if st.session_state.page == 'login':
             </p>
             <div style="background-color: #F0F4E8; padding: 10px; border-radius: 10px; font-size: 13px; color: #588157;">
                 ⏳ <strong>测评耗时：</strong> 约 5-8 分钟<br>
-                💡 <strong>提示：</strong> 请凭第一直觉回答，答案无对错
+                💡 <strong>提示：</strong> 请凭第一直觉回答，答案无对错<br>
+                💾 <strong>自动存档：</strong> 随时关闭，随时回来
             </div>
-            <p style="font-size: 12px; color: #999; margin-top: 15px;">
-                请在安静的环境下，深呼吸，领取你的专属诊断报告 👇
-            </p>
         </div>
     </div>
     """, unsafe_allow_html=True)
-    # ===============================
 
     st.markdown("<div class='ins-card' style='max-width: 400px; margin: 0 auto;'>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center; font-size:14px; color:#888;'>请输入您的专属通行证</p>", unsafe_allow_html=True)
@@ -211,16 +248,37 @@ if st.session_state.page == 'login':
     token = st.text_input("Token", label_visibility="collapsed", placeholder="输入卡密 (如 VIP888)")
     
     st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
-        if st.button("开启旅程 →"):
-            if token in VALID_TOKENS:
+    
+    st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
+    if st.button("开启旅程 →", use_container_width=True):
+        if token in VALID_TOKENS:
+            # === 核心逻辑：读取存档 ===
+            st.session_state.user_token = token
+            saved_data = load_user_data(token)
+            
+            if saved_data:
+                # 1. 如果有存档，恢复数据
+                st.session_state.answers = {int(k): v for k, v in saved_data.get("answers", {}).items()}
+                
+                # 2. 检查是否已完成
+                if saved_data.get("is_complete", False):
+                    st.session_state.deep_report = saved_data.get("report", "")
+                    st.session_state.page = 'report' # 直接跳结果页
+                    st.success("检测到您已完成测评，正在跳转报告页...")
+                    st.rerun()
+                else:
+                    # 3. 未完成，跳到上次做的题目
+                    st.session_state.current_q = saved_data.get("current_q", 1)
+                    st.session_state.page = 'test'
+                    st.toast(f"欢迎回来！为您恢复进度至第 {st.session_state.current_q} 题", icon="📂")
+                    st.rerun()
+            else:
+                # 4. 新用户
                 st.session_state.page = 'test'
                 st.rerun()
-            else:
-                st.error("通行证无效")
-        st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.error("通行证无效")
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- B. 答题页 ---
@@ -237,13 +295,13 @@ elif st.session_state.page == 'test':
     </div>
     """, unsafe_allow_html=True)
 
-    # 选项交互
     st.markdown("<div style='padding: 0 10px;'>", unsafe_allow_html=True)
     val_map = {"从无":1, "轻度":2, "中度":3, "偏重":4, "严重":5}
     default_val = "从无"
     for k, v in val_map.items():
         if st.session_state.answers.get(q_id) == v: default_val = k
             
+    # 答题交互
     answer = st.select_slider("你的真实感受：", options=["从无", "轻度", "中度", "偏重", "严重"], value=default_val)
     st.session_state.answers[q_id] = val_map[answer]
     st.markdown("</div><br>", unsafe_allow_html=True)
@@ -251,21 +309,30 @@ elif st.session_state.page == 'test':
     c1, c2 = st.columns([1, 1])
     with c1:
         st.markdown('<div class="secondary-btn">', unsafe_allow_html=True)
-        if st.button("← 上一题") and q_id > 1:
-            st.session_state.current_q -= 1
-            st.rerun()
+        if st.button("← 上一题", use_container_width=True):
+            if q_id > 1:
+                st.session_state.current_q -= 1
+                # 每次翻页自动保存
+                save_user_data(st.session_state.user_token, st.session_state.answers, st.session_state.current_q)
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with c2:
         st.markdown('<div class="primary-btn">', unsafe_allow_html=True)
         if q_id < 90:
-            if st.button("下一题 →"):
+            if st.button("下一题 →", use_container_width=True):
                 st.session_state.current_q += 1
+                # 每次翻页自动保存
+                save_user_data(st.session_state.user_token, st.session_state.answers, st.session_state.current_q)
                 st.rerun()
         else:
-            if st.button("生成报告 ✨"):
+            if st.button("生成报告 ✨", use_container_width=True):
+                # 补全数据
                 for i in range(1, 91):
                      if i not in st.session_state.answers: st.session_state.answers[i] = 1
+                
+                # 保存并跳转
                 st.session_state.page = 'report'
+                save_user_data(st.session_state.user_token, st.session_state.answers, 90) # 这里先存一次，防止生成报告时断开
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -279,6 +346,7 @@ elif st.session_state.page == 'test':
             label = f"{i}✅" if is_done else f"{i}"
             if cols[(i-1)%10].button(label, key=f"nav_{i}"):
                 st.session_state.current_q = i
+                save_user_data(st.session_state.user_token, st.session_state.answers, i) # 跳转也保存
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -317,9 +385,20 @@ elif st.session_state.page == 'report':
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("#### 💌 深度治愈指南")
-    if 'deep_report' not in st.session_state:
-        with st.spinner("小静正在用心解读您的每一项数据..."):
-            st.session_state.deep_report = get_deepseek_report(scores)
+    
+    # 核心逻辑：报告的持久化
+    if not st.session_state.deep_report: # 如果内存里没有
+        # 尝试从存档读
+        saved = load_user_data(st.session_state.user_token)
+        if saved.get("report"):
+            st.session_state.deep_report = saved["report"]
+        else:
+            # 存档也没有，说明是第一次生成
+            with st.spinner("小静正在用心解读您的每一项数据，请稍等几分钟"):
+                report_content = get_deepseek_report(scores)
+                st.session_state.deep_report = report_content
+                # === 永久存档：标记为完成，并保存报告 ===
+                save_user_data(st.session_state.user_token, st.session_state.answers, 90, is_complete=True, report=report_content)
     
     st.markdown(f"""
     <div class="ins-card" style="line-height: 1.8; color: #333;">
